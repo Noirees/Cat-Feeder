@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cat Feeder – Panel Kontrol</title>
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--tx:#2a2a2a;--mu:#777;--ac:#d9772b;--ln:#e5e0d6;--ok:#2e8b57;--er:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1a18;--card:#26241f;--tx:#f0ece4;--mu:#a49e92;--ac:#f0954a;--ln:#3a372f;--ok:#4fc08a;--er:#e8705f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,sans-serif;padding:16px}
+main{max-width:520px;margin:auto;display:grid;gap:14px}
+h1{font-size:1.3rem;margin:4px 0}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:14px;padding:16px}
+h2{font-size:1rem;margin:0 0 10px}
+label{display:block;font-size:.85rem;color:var(--mu);margin:8px 0 3px}
+input{width:100%;padding:9px;border:1px solid var(--ln);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{margin-top:12px;width:100%;padding:11px;border:0;border-radius:10px;background:var(--ac);color:#fff;font:600 1rem system-ui;cursor:pointer}
+button:disabled{opacity:.5}
+.big{font-size:1.1rem;padding:14px}
+.stat{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat div{background:var(--bg);border-radius:10px;padding:10px}
+.stat b{display:block;font-size:1.3rem}
+.stat span{font-size:.8rem;color:var(--mu)}
+#msg{min-height:1.4em;font-size:.9rem;text-align:center}
+.ok{color:var(--ok)}.er{color:var(--er)}
+details summary{cursor:pointer;color:var(--mu)}
+</style>
+</head>
+<body>
+<main>
+<h1>🐱 Cat Feeder</h1>
+
+<section class="card">
+  <h2>Status alat</h2>
+  <div class="stat">
+    <div><b id="sStok">–</b><span>Stok pakan (%)</span></div>
+    <div><b id="sMangkuk">–</b><span>Pakan di mangkuk (g)</span></div>
+    <div><b id="sBerat">–</b><span>Pemberian terakhir (g)</span></div>
+    <div><b id="sStatus">–</b><span>Status</span></div>
+    <div><b id="sInfo">–</b><span>Terakhir memberi makan</span></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Beri makan sekarang</h2>
+  <label for="gManual">Jumlah pakan (gram, 10–200)</label>
+  <input id="gManual" type="number" min="10" max="200" value="50">
+  <button class="big" id="bFeed">Beri makan</button>
+</section>
+
+<section class="card">
+  <h2>Jadwal 1 (diulang setiap hari)</h2>
+  <div class="row">
+    <div><label for="t1">Jam</label><input id="t1" type="time" value="07:30"></div>
+    <div><label for="g1">Target (gram)</label><input id="g1" type="number" min="10" max="200" value="50"></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Jadwal 2 (diulang setiap hari)</h2>
+  <div class="row">
+    <div><label for="t2">Jam</label><input id="t2" type="time" value="18:30"></div>
+    <div><label for="g2">Target (gram)</label><input id="g2" type="number" min="10" max="200" value="50"></div>
+  </div>
+  <button id="bSave">Simpan kedua jadwal</button>
+</section>
+
+<div id="msg"></div>
+
+<details class="card">
+  <summary>Pengaturan koneksi Blynk</summary>
+  <label for="token">Auth Token</label>
+  <input id="token" type="password" placeholder="Tempel token Blynk">
+  <label for="host">Server</label>
+  <input id="host" value="sgp1.blynk.cloud">
+  <button id="bConn">Simpan &amp; muat data</button>
+</details>
+</main>
+
+<script>
+const $ = s => document.getElementById(s);
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+$('token').value = store.get('cf_token', '');
+$('host').value = store.get('cf_host', 'sgp1.blynk.cloud');
+
+function say(t, ok) { const m = $('msg'); m.textContent = t; m.className = ok ? 'ok' : 'er'; }
+
+// Panggil Blynk HTTP API. Untuk penulisan, kalau browser memblokir pembacaan respons (CORS),
+// kirim ulang dengan mode no-cors: data tetap sampai, hanya tidak bisa dikonfirmasi.
+async function call(path, write) {
+  const url = 'https://' + $('host').value.trim() + '/external/api/' + path;
+  try {
+    const r = await fetch(url);
+    return { ok: r.ok, blind: false, text: await r.text() };
+  } catch (e) {
+    if (write) { await fetch(url, { mode: 'no-cors' }); return { ok: true, blind: true, text: '' }; }
+    throw e;
+  }
+}
+const tk = () => 'token=' + encodeURIComponent($('token').value.trim());
+const clamp = v => Math.min(200, Math.max(10, Math.round(+v) || 50));
+
+async function send(qs, okMsg) {
+  if (!$('token').value.trim()) return say('Isi Auth Token dulu di Pengaturan koneksi.', false);
+  try {
+    const r = await call('batch/update?' + tk() + '&' + qs, true);
+    if (!r.ok) return say('Ditolak Blynk. Cek token dan datastream V5–V14.', false);
+    say(okMsg + (r.blind ? ' (terkirim, tidak bisa dikonfirmasi dari browser)' : ''), true);
+  } catch (e) { say('Gagal terhubung. Cek internet dan server.', false); }
+}
+
+$('bFeed').onclick = () => {
+  const g = clamp($('gManual').value); $('gManual').value = g;
+  send('v14=' + g + '&v8=1', 'Perintah beri makan ' + g + ' g dikirim.');
+};
+
+$('bSave').onclick = () => {
+  const [h1, m1] = $('t1').value.split(':').map(Number);
+  const [h2, m2] = $('t2').value.split(':').map(Number);
+  if ([h1, m1, h2, m2].some(isNaN)) return say('Isi jam kedua jadwal.', false);
+  const g1 = clamp($('g1').value), g2 = clamp($('g2').value);
+  $('g1').value = g1; $('g2').value = g2;
+  send('v6=' + h1 + '&v12=' + m1 + '&v5=' + g1 + '&v7=' + h2 + '&v13=' + m2 + '&v11=' + g2,
+       'Jadwal 1 (' + $('t1').value + ', ' + g1 + ' g) dan jadwal 2 (' + $('t2').value + ', ' + g2 + ' g) disimpan.');
+};
+
+const pad = n => String(n).padStart(2, '0');
+function parse(t) { try { return JSON.parse(t); } catch (e) { return null; } }
+
+async function loadSettings() {
+  if (!$('token').value.trim()) return;
+  try {
+    const r = await call('get?' + tk() + '&v5&v6&v7&v11&v12&v13&v14');
+    const j = parse(r.text); if (!j) return;
+    if (j.v6 != null && j.v12 != null) $('t1').value = pad(j.v6) + ':' + pad(j.v12);
+    if (j.v7 != null && j.v13 != null) $('t2').value = pad(j.v7) + ':' + pad(j.v13);
+    if (j.v5) $('g1').value = j.v5;
+    if (j.v11) $('g2').value = j.v11;
+    if (j.v14) $('gManual').value = j.v14;
+  } catch (e) {}
+}
+
+async function loadStatus() {
+  if (!$('token').value.trim()) return;
+  try {
+    const r = await call('get?' + tk() + '&v0&v2&v3&v9&v15');
+    const j = parse(r.text); if (!j) return;
+    $('sStok').textContent = j.v0 ?? '–';
+    $('sBerat').textContent = j.v2 ?? '–';
+    $('sMangkuk').textContent = j.v15 ?? '–';
+    $('sStatus').textContent = j.v3 ?? '–';
+    $('sInfo').textContent = j.v9 ?? '–';
+  } catch (e) {
+    $('sStatus').textContent = 'tidak terbaca';
+  }
+}
+
+$('bConn').onclick = () => {
+  store.set('cf_token', $('token').value.trim());
+  store.set('cf_host', $('host').value.trim());
+  say('Tersimpan. Memuat data…', true);
+  loadSettings(); loadStatus();
+};
+
+loadSettings(); loadStatus();
+setInterval(loadStatus, 5000);
+</script>
+</body>
+</html>
